@@ -7,7 +7,7 @@ $("title").value=s.quizTitle;$("questions").innerHTML=s.questionCount?s.question
  document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>beginEdit(b.dataset.edit));
  document.querySelectorAll('[data-delete]').forEach(b=>b.onclick=async()=>{if(!confirm("Delete this question?"))return;try{await api("/api/admin/questions/"+b.dataset.delete,"DELETE");msg("Question deleted.")}catch(e){msg(e.message,true)}});
 $("start").disabled=s.status!=="registration"||!s.questionCount;$("next").disabled=s.status!=="live";
-$("leaderboard").innerHTML=s.leaderboard.length?`<table><tr><th>#</th><th>Name</th><th>Score</th><th>Correct</th></tr>${s.leaderboard.map((p,i)=>`<tr><td class="rank">${i+1}</td><td>${esc(p.name)}</td><td>${p.score}</td><td>${p.correct}</td></tr>`).join("")}</table>`:"No participants yet.";
+$("leaderboard").innerHTML=s.leaderboard.length?`<table><tr><th>#</th><th>User Name</th><th>City</th><th>Score</th><th>Correct</th></tr>${s.leaderboard.map((p,i)=>`<tr><td class="rank">${i+1}</td><td>${esc(p.name)}</td><td>${esc(p.city||"—")}</td><td>${p.score}</td><td>${p.correct}</td></tr>`).join("")}</table>`:"No participants yet.";
 }
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 async function init(){try{$("app").classList.remove("hidden");await loadQR();const s=await api("/api/state");s.questions=await api("/api/admin/questions");render(s);}catch(e){msg(e.message,true)}}
@@ -22,5 +22,3 @@ $("next").onclick=async()=>{if(!confirm("Publish the next question (or finish if
 $("reset").onclick=async()=>{if(!confirm("Reset the entire quiz and clear all participants and questions?"))return;try{await api("/api/admin/reset","POST",{});msg("Quiz reset.");}catch(e){msg(e.message,true)}};
 $("copyUrl").onclick=()=>navigator.clipboard.writeText($("joinUrl").textContent).then(()=>msg("Join link copied."));
 const socket=io();socket.on("state",async s=>{if(!$("app").classList.contains("hidden")){try{s.questions=await api("/api/admin/questions");render(s);}catch(e){msg(e.message,true)}}});
-
-const logoutButton=document.getElementById("logout");if(logoutButton)logoutButton.onclick=async()=>{try{await api("/api/admin/logout","POST",{});location.href="/";}catch(e){msg(e.message,true)}};
