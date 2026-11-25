@@ -3,7 +3,6 @@ const express = require("express");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
-const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { Server } = require("socket.io");
 
@@ -14,38 +13,9 @@ const PORT = Number(process.env.PORT || 3000);
 const configuredMax = Number.parseInt(process.env.MAX_PARTICIPANTS || "200", 10);
 const MAX = Number.isFinite(configuredMax) ? Math.min(200, Math.max(1, configuredMax)) : 200;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data.json");
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
-const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || "";
-const COOKIE_NAME = "quiz_admin";
-if (process.env.NODE_ENV === "production" && (!ADMIN_PASSWORD || !ADMIN_SESSION_SECRET)) {
-  throw new Error("Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in the hosting environment.");
-}
 
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "10mb" }));
-function signSession(expires) {
-  return crypto.createHmac("sha256", ADMIN_SESSION_SECRET).update(String(expires)).digest("hex");
-}
-function isAdmin(req) {
-  const raw = (req.headers.cookie || "").split(";").map(x => x.trim()).find(x => x.startsWith(COOKIE_NAME + "="));
-  if (!raw) return false;
-  const token = decodeURIComponent(raw.slice(COOKIE_NAME.length + 1));
-  const [expiresText, signature] = token.split(".");
-  const expires = Number(expiresText);
-  if (!Number.isFinite(expires) || expires < Date.now() || !signature) return false;
-  const expected = signSession(expires);
-  if (signature.length !== expected.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-}
-function requireAdmin(req, res, next) {
-  if (isAdmin(req)) return next();
-  return res.status(401).json({ error: "Admin login required." });
-}
-// Prevent direct access to the admin HTML without a valid login cookie.
-app.use((req, res, next) => {
-  if (req.path === "/admin.html") return res.redirect("/");
-  next();
-});
 app.use(express.static(path.join(__dirname, "public")));
 
 const freshState = () => ({
@@ -79,7 +49,7 @@ function publicQuestion() {
 }
 function leaderboard() {
   return [...state.participants]
-    .map(p => ({ id: p.id, name: p.name, score: p.score, correct: p.correct }))
+    .map(p => ({ id: p.id, name: p.name, city: p.city || "", score: p.score, correct: p.correct }))
     .sort((a,b) => b.score - a.score || b.correct - a.correct || a.name.localeCompare(b.name));
 }
 function snapshot() {
@@ -104,31 +74,12 @@ function safeText(v, max=180) {
   return typeof v === "string" ? v.trim().slice(0,max) : "";
 }
 
-app.get("/", (req,res) => {
-  if (isAdmin(req)) return res.sendFile(path.join(__dirname, "public", "admin.html"));
-  return res.sendFile(path.join(__dirname, "public", "login.html"));
-});
-app.post("/api/admin/login", (req,res) => {
-  const supplied = typeof req.body.password === "string" ? req.body.password : "";
-  const expected = ADMIN_PASSWORD;
-  const a = Buffer.from(supplied); const b = Buffer.from(expected);
-  if (!expected || a.length !== b.length || !crypto.timingSafeEqual(a,b))
-    return res.status(401).json({ error: "Incorrect admin password." });
-  const expires = Date.now() + 12 * 60 * 60 * 1000;
-  const token = `${expires}.${signSession(expires)}`;
-  res.setHeader("Set-Cookie", `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Strict; Max-Age=43200${process.env.NODE_ENV === "production" ? "; Secure" : ""}`);
-  res.json({ ok: true });
-});
-app.post("/api/admin/logout", requireAdmin, (req,res) => {
-  res.setHeader("Set-Cookie", `${COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0${process.env.NODE_ENV === "production" ? "; Secure" : ""}`);
-  res.json({ ok: true });
-});
-app.use("/api/admin", requireAdmin);
+app.get("/", (_,res) => res.sendFile(path.join(__dirname, "public", "admin.html")));
 app.get("/join", (_,res) => res.sendFile(path.join(__dirname, "public", "join.html")));
 app.get("/display", (_,res) => res.sendFile(path.join(__dirname, "public", "display.html")));
 
 app.get("/api/state", (_,res) => res.json(snapshot()));
-app.get("/api/qr", requireAdmin, async (req,res) => {
+app.get("/api/qr", async (req,res) => {
   try {
     const base = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
     const url = `${base}/join`;
@@ -199,11 +150,13 @@ app.post("/api/join", (req,res) => {
   if (state.status !== "registration") return res.status(400).json({error:"Registration is closed. Please wait for the next quiz."});
   if (state.participants.length >= MAX) return res.status(400).json({error:`The quiz is full (${MAX} participants).`});
   const name = safeText(req.body.name,40);
+  const city = safeText(req.body.city,60);
   if (!name) return res.status(400).json({error:"Please enter your name."});
+  if (!city) return res.status(400).json({error:"Please enter your city."});
   const id = "p_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
-  const p = {id,name,score:0,correct:0,answers:{}};
+  const p = {id,name,city,score:0,correct:0,answers:{}};
   state.participants.push(p); save(); emitUpdate();
-  res.json({id,name,quizTitle:state.quizTitle});
+  res.json({id,name,city,quizTitle:state.quizTitle});
 });
 app.post("/api/answer", (req,res) => {
   const { participantId, choice } = req.body;
